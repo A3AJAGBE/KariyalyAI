@@ -2,7 +2,7 @@
 
 Paste this whole file at the start of every AI coding session. Keep it in the repo root and update it in the same PR as any change to the data model, stack or output formats. If the code and this file disagree, this file wins until it is deliberately changed.
 
-Last updated: 6 Nov 2026. Build ends 15 Nov (feature freeze 13 Nov). Demo day 23 Nov.
+Last updated: 6 Nov 2026 (data model now matches `supabase/migrations/001_init.sql`, which is the source of truth for the database). Build ends 15 Nov (feature freeze 13 Nov). Demo day 23 Nov.
 
 ## 1. Product
 
@@ -28,7 +28,7 @@ Constraints: free tiers only (Supabase, Netlify, Gemini). No auto-apply, no scra
 
 | Layer | Choice |
 |---|---|
-| Frontend | React 18, Vite, TypeScript, React Router, TanStack Query, Tailwind CSS, react-hook-form + zod, supabase-js, pdfjs-dist, mammoth |
+| Frontend | React 18, Vite, TypeScript, React Router, TanStack Query, Tailwind CSS, react-hook-form + zod (v4, what `npm i zod` installs), supabase-js, pdfjs-dist, mammoth |
 | Hosting | Netlify (free) |
 | Auth, DB, storage | Supabase (Postgres with Row Level Security, Auth, Storage) |
 | AI layer | One Netlify Function, `ai`, calling the Gemini free tier. Model name read from env `GEMINI_MODEL` |
@@ -77,7 +77,9 @@ Repo structure
 
 ## 6. Data model (Postgres on Supabase)
 
-Every table has `id uuid primary key default gen_random_uuid()`, `created_at timestamptz default now()` and, unless noted, `user_id uuid references auth.users on delete cascade`. Row Level Security is on for every table with the policy `user_id = auth.uid()` for select, insert, update and delete.
+Source of truth: `supabase/migrations/001_init.sql`. If this section and the SQL disagree, the SQL wins.
+
+Every table has `id uuid primary key default gen_random_uuid()`, `created_at timestamptz default now()` and, unless noted, `user_id uuid not null default auth.uid() references auth.users on delete cascade`. **`user_id` defaults to the signed-in user, so the frontend never sends it on insert.** Row Level Security is on for every table. User-owned tables have one policy: full access where `user_id = auth.uid()`. Exceptions are `application_status_history` and the two sponsor tables (below). The `anon` role has no access to anything.
 
 **profiles** (primary key is `user_id`, no separate id)
 - full_name text, email text, summary text
@@ -85,7 +87,8 @@ Every table has `id uuid primary key default gen_random_uuid()`, `created_at tim
 - experience jsonb: `[{company, title, start, end, bullets[]}]`
 - education jsonb: `[{institution, degree, year}]`
 - country_of_residence text, right_to_work_countries text[]
-- raw_cv_text text, cv_file_path text (optional), updated_at timestamptz
+- raw_cv_text text, cv_file_path text (optional; no storage bucket exists yet), updated_at timestamptz (set by trigger)
+- Client saves with an upsert on `user_id`.
 
 **jobs**
 - title text, company text, location_text text, location_country text (nullable), is_remote boolean (nullable)
@@ -94,31 +97,39 @@ Every table has `id uuid primary key default gen_random_uuid()`, `created_at tim
 **matches** (unique on user_id + job_id; re-running replaces the row)
 - job_id uuid references jobs on delete cascade
 - score int (0 to 100), verdict text (`strong` | `moderate` | `weak`), summary text
-- strengths jsonb, gaps jsonb, work_auth jsonb
+- strengths jsonb, gaps jsonb, work_auth jsonb (a `WorkAuthResult`, see `shared/schemas.ts`)
+- input_hash text (cache key for `match_job`)
 
 **generated_outputs**
 - job_id uuid references jobs on delete cascade
 - kind text (`cv_summary` | `cover_letter` | `company_brief` | `outreach`)
 - content jsonb (as generated), edited_content text (nullable, the user's edits)
 - meta jsonb (tone, channel, message_type), input_hash text (sha256 of task + canonical input)
+- Unique on `(user_id, input_hash, kind)`. `tailor_application` writes **two rows** (`cv_summary` and `cover_letter`) that share one `input_hash`.
 
 **applications**
 - job_id uuid references jobs on delete set null (nullable), company text, role text, notes text
-- status text (`saved` | `applied` | `interview` | `offer` | `rejected`), applied_at timestamptz, updated_at timestamptz
+- status text, default `saved` (`saved` | `applied` | `interview` | `offer` | `rejected`), applied_at timestamptz, updated_at timestamptz
+- **Triggers do the bookkeeping.** The client only inserts rows and updates `status`. On insert and on every status change the database writes the history row, sets `updated_at`, and sets `applied_at` the first time status becomes `applied`.
 
-**application_status_history** (append-only, no user_id; policy checks the parent application's owner)
+**application_status_history** (append-only, no user_id)
 - application_id uuid references applications on delete cascade
-- from_status text (nullable), to_status text, changed_at timestamptz default now()
-- Undo sets the application back to `from_status` and appends a new history row.
+- from_status text (nullable, null on the first row), to_status text, changed_at timestamptz default now()
+- **Read-only for clients** (select policy via the parent application's owner). Written only by the database trigger. The frontend never inserts, updates or deletes history.
+- **Undo** = update the application's `status` back to the previous row's `from_status`. The trigger then appends the reversal as a new history row.
 
 **ai_usage**
-- task text. Used only for rate limiting.
+- task text. Used only for rate limiting (index on `user_id, created_at`).
 
 **sponsor_register** (no user_id; select allowed for authenticated users only)
-- org_name text, org_name_norm text (GIN trigram index), town text, county text, route text, type_rating text
-- Companion one-row table `sponsor_register_meta(register_date date)`.
+- org_name text, org_name_norm text (**generated by the database** from `org_name`, GIN trigram index), town text, county text, route text, type_rating text
+- The loader inserts only `org_name`, `town`, `county`, `route`, `type_rating`, using the service role key. Clients cannot write.
+- Companion table `sponsor_register_meta(id boolean primary key default true, register_date date)`: exactly one row, the date of the loaded CSV. The loader upserts it.
 
-RPCs: `match_sponsor(q text)` returns best match (org_name, town, route, similarity, register_date). `delete_my_data()` (security definer) removes all of the caller's rows and stored files.
+RPCs (callable by signed-in users only):
+- `match_sponsor(q text)` returns the single best fuzzy match as `(org_name, town, route, similarity, register_date)`, or no rows. It does not apply a threshold: the caller treats `similarity >= 0.6` as `likely_licensed`.
+- `delete_my_data()` deletes all of the caller's database rows (history cascades). It cannot delete uploaded files: if CV files are ever stored, remove them from the client with the Storage API.
+- `normalise_org_name(text)` is the shared normaliser (lowercase, strip punctuation and company suffixes). `match_sponsor` and `org_name_norm` both use it, so never normalise names in the loader.
 
 ## 7. Work authorisation logic (`/shared/workAuth.ts`, pure function, unit tested)
 
@@ -187,6 +198,8 @@ All prompts: use only facts from the provided input, never invent employers, dat
 - Commit the migration file; never edit the live database by hand without adding it to a migration.
 - Copy buttons use the clipboard API and show a toast.
 - AI-generated text is editable; edits autosave (debounced) to `generated_outputs.edited_content`.
+- Tracker code never writes `application_status_history` or `applied_at`; it only changes `status`.
+- Frontend inserts omit `user_id` (the database fills it).
 - Privacy: short note on the upload screen, RLS on every table, no CV content in logs, Delete my data button on the Profile page.
 
 ## 11. Open decisions (update when settled)

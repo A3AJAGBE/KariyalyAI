@@ -105,7 +105,7 @@ Tab on the job page. Generate calls `tailor_application`. Two editable text area
 
 Only if step 4 is done by Mon 9 and the team agrees.
 
-1. `scripts/load_sponsors.ts`: read the GOV.UK register CSV, normalise names (lowercase, strip punctuation and suffixes like ltd, plc), de-duplicate, insert in batches, record the register date.
+1. `scripts/load_sponsors.ts`: read the GOV.UK register CSV, de-duplicate by organisation name and town, insert in batches (the database normalises names itself, so don't normalise in the script), upsert the register date into `sponsor_register_meta`.
 2. `match_sponsor(q)` using `pg_trgm`. Similarity 0.6 or higher means `likely_licensed`. Tune on 10 to 15 known companies.
 3. Show matched name, town and register date.
 
