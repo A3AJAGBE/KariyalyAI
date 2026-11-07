@@ -112,6 +112,7 @@ export const ParseCvOutput = z.object({
   education: z.array(EducationItem),
   suggested_target_roles: z.array(z.string()),
 });
+export type ParseCvOutput = z.infer<typeof ParseCvOutput>;
 
 // ---------------------------------------------------------------------------
 // Task: match_job
