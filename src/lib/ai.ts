@@ -27,7 +27,6 @@ export async function callAI<T extends TaskName>(
 
     if (MOCK_AI) {
       const fixture = aiFixtures[task]
-
       const data = aiTasks[task].output.parse(fixture)
 
       return {

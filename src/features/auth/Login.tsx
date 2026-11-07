@@ -15,7 +15,7 @@ export default function Login() {
 
   const from =
     (location.state as { from?: { pathname: string } })?.from?.pathname ??
-    '/app/profile'
+    '/onboarding'
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
