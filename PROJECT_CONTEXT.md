@@ -2,7 +2,7 @@
 
 Paste this whole file at the start of every AI coding session. Keep it in the repo root and update it in the same PR as any change to the data model, stack or output formats. If the code and this file disagree, this file wins until it is deliberately changed. This file is the single source of truth. Where any older planning document (the project brief or the first project context document) disagrees with it, this file wins.
 
-Last updated: 8 Nov 2026. The database is defined by the migrations in `supabase/migrations/` applied in order (`001_init.sql`, then `002_grounding_and_global_cap.sql`). Build ends 15 Nov (feature freeze 13 Nov). Demo day 23 Nov.
+Last updated: 8 Nov 2026. The database is defined by the migrations in `supabase/migrations/` applied in order (`001_init.sql`, `002_ai_cache.sql`, then `003_grounding_and_global_cap.sql`). Build ends 15 Nov (feature freeze 13 Nov). Demo day 23 Nov.
 
 ## 1. Product
 
@@ -42,7 +42,7 @@ Constraints: free tiers only (Supabase, Netlify, Gemini). No auto-apply, no scra
 | Fuzzy matching | Postgres `pg_trgm` (UK sponsor register) |
 
 Environment variables
-- Netlify (server): `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GROUNDING_ENABLED` (`true` or `false`, kill switch for search grounding), `GLOBAL_DAILY_AI_CAP`, `GLOBAL_DAILY_GROUNDED_CAP` (set both from the limits shown in Google AI Studio for the chosen model, with a safety margin)
+- Netlify (server): `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GROUNDING_ENABLED` (`true` or `false`, kill switch for search grounding), `GLOBAL_DAILY_AI_CAP`, `GLOBAL_DAILY_GROUNDED_CAP` (set both from the limits shown in Google AI Studio for the chosen model, with a safety margin) Optional tuning: `GROUNDING_TIMEOUT_MS` (default 6000) and `STRUCTURE_TIMEOUT_MS` (default 3500), the time limits for the two grounded Gemini calls. If the caps are unset, the function uses placeholder defaults of 250 requests and 100 grounded requests per day, so set both.
 - Browser: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_AI_ENDPOINT` (default `/api/ai`), `VITE_MOCK_AI` (`true` returns fixtures; development only, and must be false or unset in the Netlify production environment)
 - The Supabase service role key is used only by the local sponsor loader script. Never deploy it.
 
@@ -53,8 +53,8 @@ Repo structure
   /features     profile, jobs, tailor, tracker, research, outreach
   /components   Button, Card, Badge, EmptyState, CopyButton
 /shared         schema.ts (zod), workAuth.ts, countries.ts, types.ts
-/netlify/functions   ai.ts, prompts/
-/supabase/migrations 001_init.sql, 002_grounding_and_global_cap.sql
+/netlify/functions   ai.ts, lib/grounding.ts, prompts/
+/supabase/migrations 001_init.sql, 002_ai_cache.sql, 003_grounding_and_global_cap.sql
 /scripts        load_sponsors.ts
 ```
 
@@ -127,8 +127,13 @@ Every table has `id uuid primary key default gen_random_uuid()`, `created_at tim
 - **Read-only for clients** (select policy via the parent application's owner). Written only by the database trigger. The frontend never inserts, updates or deletes history.
 - **Undo** = update the application's `status` back to the previous row's `from_status`. The trigger then appends the reversal as a new history row.
 
+**ai_cache** (added in `002_ai_cache.sql`)
+- task text (one of the five task names), input_hash text, response jsonb (the validated task output)
+- Unique on `(user_id, task, input_hash)`. The `ai` function checks it before calling Gemini unless `force` is true. `delete_my_data()` clears it (as of `003`).
+- Caching note: `generated_outputs` and `matches` also carry an `input_hash`. The `ai` function uses `ai_cache` for lookups; the other two tables hold what the user sees and edits. Do not treat a cache hit as proof the result is saved to those tables. Cached `company_brief` results can contain news that goes stale, so Regenerate (`force: true`) must bypass the cache.
+
 **ai_usage**
-- task text, grounded boolean not null default false (added in `002`; true when the call used search grounding)
+- task text, grounded boolean not null default false (added in `003`; true when the call used search grounding)
 - Used for per-user rate limiting (index on `user_id, created_at`) and, through `global_ai_usage_today`, for the shared daily caps.
 
 **sponsor_register** (no user_id; select allowed for authenticated users only)
@@ -138,9 +143,9 @@ Every table has `id uuid primary key default gen_random_uuid()`, `created_at tim
 
 RPCs (callable by signed-in users only):
 - `match_sponsor(q text)` returns the single best fuzzy match as `(org_name, town, route, similarity, register_date)`, or no rows. It does not apply a threshold: the caller treats `similarity >= 0.6` as `likely_licensed`.
-- `delete_my_data()` deletes all of the caller's database rows (history cascades). It cannot delete uploaded files: if CV files are ever stored, remove them from the client with the Storage API. It also cannot delete anything Google may have kept (see section 10).
+- `delete_my_data()` deletes all of the caller's database rows, including `ai_cache` as of `003` (history cascades). It cannot delete uploaded files: if CV files are ever stored, remove them from the client with the Storage API. It also cannot delete anything Google may have kept (see section 10).
 - `normalise_org_name(text)` is the shared normaliser (lowercase, strip punctuation and company suffixes). `match_sponsor` and `org_name_norm` both use it, so never normalise names in the loader.
-- `global_ai_usage_today(grounded_only boolean)` (added in `002`, security definer) returns one integer: how many AI calls, across all users, were made since midnight UTC (only grounded calls when `grounded_only` is true). It exposes no rows, so the service role key is not needed in the function.
+- `global_ai_usage_today(grounded_only boolean)` (added in `003`, security definer) returns one integer: how many AI calls, across all users, were made since midnight UTC (only grounded calls when `grounded_only` is true). It exposes no rows, so the service role key is not needed in the function.
 
 ## 7. Work authorisation logic (`/shared/workAuth.ts`, pure function, unit tested)
 
@@ -169,15 +174,18 @@ Response:
 { "ok": true, "data": <task output>, "cached": boolean }
 { "ok": false, "error": { "code": string, "message": string } }
 ```
-Error codes: `UNAUTHENTICATED`, `INVALID_INPUT`, `RATE_LIMITED`, `BUSY`, `MODEL_ERROR`, `BAD_OUTPUT`, `TIMEOUT`.
+Error codes: `UNAUTHENTICATED`, `INVALID_INPUT`, `RATE_LIMITED`, `BUSY` (shared daily cap reached, HTTP 503), `MODEL_ERROR`, `BAD_OUTPUT`, `TIMEOUT`.
 
 Function behaviour: verify token, validate input, check cache by `input_hash` (skip if `force`), check the per-user rate limit (6 per minute, 60 per day), check the shared daily cap through `global_ai_usage_today` (return `BUSY` with a friendly message if reached), call Gemini, validate output with zod, retry once on invalid JSON, store result. Input caps: cv_text 12,000 characters, job description 8,000, about_text 4,000.
 
-Grounding behaviour (`company_brief` only):
-1. If `GROUNDING_ENABLED` is true and the shared grounded cap is not reached, call Gemini with the Google Search tool. Record the call in `ai_usage` with `grounded = true`. Build `recent_news` and `sources` from the grounding metadata only.
-2. If grounding fails for any reason (quota error, timeout, empty result, or the switch is off), call Gemini again without search, using `about_text`. Return `grounded: false` and a `fallback_reason` (`disabled`, `quota`, `error` or `no_results`).
-3. If there is no `about_text` either, return a low-confidence brief and tell the user to paste About text.
-4. Spike first (see the spec): confirm that the chosen model accepts the search tool together with JSON output. If it does not, use two calls: one grounded call for text and sources, then one plain call that converts the result to the JSON shape below.
+Grounding behaviour (`company_brief` only), implemented in `netlify/functions/ai.ts`:
+1. If `GROUNDING_ENABLED` is not `false` and the shared grounded cap is not reached, try grounding with two Gemini calls. Call 1 uses the Google Search tool and returns plain text (Gemini does not accept the search tool together with JSON output on every model). Call 2 has no search and converts that text to JSON, referring to news sources by index. Record the request in `ai_usage` with `grounded = true`.
+2. `recent_news` URLs and `sources` come only from Gemini's grounding metadata, never from the model. A news item that cannot be tied to a listed source is dropped, so every news item has a real link. At most 5 items and 10 sources; only https sources.
+3. If grounding fails (HTTP 429 gives `quota`, other errors and timeouts give `error`, no sources or no text gives `no_results`), or is switched off (`disabled`), or the shared grounded cap is reached (`quota`), call Gemini without search using only `about_text`. Return `grounded: false`, `recent_news: []`, `sources: []` and the `fallback_reason`.
+4. Confidence is decided in code: `low` when there is neither grounding nor `about_text`, otherwise `medium`.
+5. Only grounded briefs are cached, and a cached brief is reused for 24 hours. Fallback briefs are not cached, so the next request tries grounding again. `force: true` bypasses the cache.
+6. Timeouts: Netlify synchronous functions default to 10 seconds, so the grounded path uses short timeouts (6 s and 3.5 s by default). Measure real latency. If grounded briefs often time out, set `GROUNDING_ENABLED=false` and ship the fallback.
+7. Google's terms for displaying grounded results (for example Search Suggestions) must be checked and followed in the Research tab. This is still open.
 
 Frontend calls only `callAI(task, input, { force })` from `/src/lib/ai.ts`.
 
@@ -219,6 +227,7 @@ All prompts: use only facts from the provided input, never invent employers, dat
 - AI-generated text is editable; edits autosave (debounced) to `generated_outputs.edited_content`.
 - Tracker code never writes `application_status_history` or `applied_at`; it only changes `status`.
 - Frontend inserts omit `user_id` (the database fills it).
+- Profile countries: the form uses a dropdown for country of residence and a validated picker for right-to-work countries, both from `/shared/countries.ts`. Read saved profiles through `ProfileFromDb` (in `schema.ts`), which maps older free-text values to canonical names and drops unrecognised ones, so a profile saved before the dropdowns still loads.
 - Privacy: RLS on every table, no CV content in logs, Delete my data button on the Profile page. The upload screen has a required consent checkbox with this meaning: "My CV text will be sent to Google's Gemini API to build my profile. On the free tier Google may use submitted data to improve its products. Deleting my data here does not delete anything Google may have kept." Send the AI only what each task needs, not the whole profile.
 - Demo readiness: keep an already confirmed demo account with a sample CV for the demo. The app itself stays in real-product mode: email confirmation is on and nothing is switched to a demo mode. Supabase's built-in email sending has very low limits, so configure a custom SMTP provider on a free tier before testing sign-ups, or confirm test users by hand in the Supabase dashboard. Free Supabase projects pause after about 7 days idle, so check the project is awake on 22 and 23 Nov.
 - Keeping this file accurate: the lead owns this file. Any pull request that changes a table, a JSON shape or a rule updates this file in the same pull request, and the review checklist asks "does this match PROJECT_CONTEXT.md?". If the code and this file disagree, raise it the same day.
@@ -233,7 +242,7 @@ Settled
 
 Open (update this list as items settle)
 1. Which Gemini model, and its current free-tier limits including the separate grounding quota. Set `GLOBAL_DAILY_AI_CAP` and `GLOBAL_DAILY_GROUNDED_CAP` from the numbers shown in Google AI Studio.
-2. Whether the chosen model accepts the search tool together with JSON output (the spike in the spec decides between one call and two).
+2. Real latency and quota of grounded briefs on the chosen model and Netlify plan (the spike in the spec). The two-call design is already built, so the spike only measures; it no longer decides the design.
 3. Google's current terms for displaying grounded results (for example any required search suggestions display). Check them and follow them in the Research tab.
 4. Who owns which step (see the ownership table in `KariyalyAI_Build_Spec.md`).
 5. Submission and judging requirements for 23 Nov, to be confirmed with the organisers.

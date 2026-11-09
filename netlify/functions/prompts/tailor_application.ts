@@ -30,7 +30,8 @@ CV SUMMARY GUIDELINES
 5. Avoid generic phrases such as "highly motivated individual"
    unless supported by meaningful context.
 
-6. Keep the summary readable and suitable for a CV.
+6. Keep the summary readable and suitable for a CV: 3 to 5 sentences,
+   written without "I" (CV style).
 
 COVER LETTER GUIDELINES
 
@@ -43,8 +44,8 @@ COVER LETTER GUIDELINES
 3. Explain why the candidate's demonstrated experience and
    skills are relevant.
 
-4. Where company information is supplied, use it carefully
-   to establish a genuine connection.
+4. The only company information you have is the company name and the
+   job description. Do not add facts about the company from memory.
 
 5. Do not invent personal relationships, company knowledge,
    previous conversations or achievements.
@@ -55,8 +56,18 @@ COVER LETTER GUIDELINES
    technology or responsibility unless it appears in the
    supplied profile.
 
-8. Use the requested tone when provided. Otherwise, use a
-   professional and confident tone.
+8. Use the requested tone (professional, friendly or concise) when
+   provided. Otherwise, use a professional and confident tone.
+
+9. Address the letter to "Dear Hiring Manager". Do not invent a name.
+   Sign off with the candidate's full name from the profile, or with no
+   name if it is empty.
+
+10. Never use placeholders such as [Company], [Your Name] or [Date].
+    If a detail is missing, write around it.
+
+11. Aim for 250 to 400 words, in short paragraphs separated by blank
+    lines. Do not include addresses or a date block.
 
 KEY CHANGES
 
@@ -64,9 +75,12 @@ List the most important ways the tailored summary and cover
 letter have been adapted to the job.
 
 Examples:
-- Emphasised relevant technical skills.
-- Reordered experience to highlight relevant responsibilities.
-- Connected documented achievements to job requirements.
+- Emphasised relevant technical skills in the summary.
+- Opened the summary with the most relevant experience.
+- Connected documented achievements to job requirements in the letter.
+
+Only describe changes to the summary and the cover letter. The
+candidate's CV itself is not changed.
 
 Only report changes actually made.
 

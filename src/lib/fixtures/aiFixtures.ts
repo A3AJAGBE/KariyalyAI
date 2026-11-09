@@ -62,6 +62,8 @@ export const aiFixtures = {
     ],
   },
 
+  // Fallback brief: no search grounding and no pasted About text.
+  // See companyBriefGroundedFixture below for the grounded shape.
   company_brief: {
     what_they_do: 'The company information has not been provided. More research is needed.',
     values: [],
@@ -70,6 +72,10 @@ export const aiFixtures = {
       'What does success look like in this role?',
       'What technologies does the team currently use?',
     ],
+    recent_news: [],
+    sources: [],
+    grounded: false,
+    fallback_reason: 'disabled',
     confidence: 'low',
   },
 
@@ -80,3 +86,27 @@ export const aiFixtures = {
 } satisfies {
   [T in TaskName]: TaskOutput<T>
 }
+
+/** A grounded company brief, for building and testing the Research tab's news and sources. */
+export const companyBriefGroundedFixture = {
+  what_they_do: 'Example Company builds scheduling software for clinics.',
+  values: ['Customer focus', 'Reliability'],
+  talking_points: [
+    'Its recent expansion into new markets and what that means for the frontend team.',
+  ],
+  questions_to_ask: ['How does the team decide which features to build next?'],
+  recent_news: [
+    {
+      headline: 'Example Company opens a new office',
+      source: 'example-news.com',
+      url: 'https://example-news.com/example-company-office',
+      date: '2026-10-01',
+    },
+  ],
+  sources: [
+    { title: 'example-news.com', url: 'https://example-news.com/example-company-office' },
+  ],
+  grounded: true,
+  fallback_reason: null,
+  confidence: 'medium',
+} satisfies TaskOutput<'company_brief'>
