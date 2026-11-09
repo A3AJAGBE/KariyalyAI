@@ -52,7 +52,7 @@ Repo structure
   /lib          supabase.ts, ai.ts (callAI), copy.ts, fixtures/
   /features     profile, jobs, tailor, tracker, research, outreach
   /components   Button, Card, Badge, EmptyState, CopyButton
-/shared         schemas.ts (zod), workAuth.ts, countries.ts, types.ts
+/shared         schema.ts (zod), workAuth.ts, countries.ts, types.ts
 /netlify/functions   ai.ts, prompts/
 /supabase/migrations 001_init.sql, 002_grounding_and_global_cap.sql
 /scripts        load_sponsors.ts
@@ -106,7 +106,7 @@ Every table has `id uuid primary key default gen_random_uuid()`, `created_at tim
 **matches** (unique on user_id + job_id; re-running replaces the row)
 - job_id uuid references jobs on delete cascade
 - score int (0 to 100), verdict text (`strong` | `moderate` | `weak`), summary text
-- strengths jsonb, gaps jsonb, work_auth jsonb (a `WorkAuthResult`, see `shared/schemas.ts`)
+- strengths jsonb, gaps jsonb, work_auth jsonb (a `WorkAuthResult`, see `shared/schema.ts`)
 - input_hash text (cache key for `match_job`)
 
 **generated_outputs**
@@ -181,7 +181,7 @@ Grounding behaviour (`company_brief` only):
 
 Frontend calls only `callAI(task, input, { force })` from `/src/lib/ai.ts`.
 
-## 9. Output formats (JSON shapes, source of truth is `/shared/schemas.ts`)
+## 9. Output formats (JSON shapes, source of truth is `/shared/schema.ts`)
 
 **parse_cv**
 - input: `{ cv_text }`

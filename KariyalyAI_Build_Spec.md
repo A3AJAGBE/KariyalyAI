@@ -53,7 +53,7 @@ Ownership is proposed to spread the critical path. Confirm or change it at the m
 
 1. Create the repo, Vite + TypeScript + Tailwind app, push to GitHub, deploy the blank app to Netlify. Protect `main` (pull request required) and connect Netlify so every merge deploys.
 2. Create the Supabase project. Write `supabase/migrations/001_init.sql`: all tables, RLS on every table, `pg_trgm`, `match_sponsor()`, `delete_my_data()` (as in PROJECT_CONTEXT section 6). Then write `002_grounding_and_global_cap.sql`: add `ai_usage.grounded boolean not null default false` and the `global_ai_usage_today(grounded_only boolean)` function.
-3. Write `/shared/schemas.ts` (zod) for the five task inputs and outputs (PROJECT_CONTEXT section 9, including `recent_news`, `sources`, `grounded` and `fallback_reason` on `company_brief`) and `/shared/countries.ts` (fixed country list with aliases). **Send both to the AI person immediately. This unblocks step A.**
+3. Write `/shared/schema.ts` (zod) for the five task inputs and outputs (PROJECT_CONTEXT section 9, including `recent_news`, `sources`, `grounded` and `fallback_reason` on `company_brief`) and `/shared/countries.ts` (fixed country list with aliases). **Send both to the AI person immediately. This unblocks step A.**
 4. Auth: signup, login, logout, protected routes. Email confirmation stays on (team decision, 8 Nov: no demo mode). Supabase's built-in email sending has very low limits, so configure a custom SMTP provider on a free tier, or confirm test users by hand in the Supabase dashboard.
 5. `callAI(task, input, { force })` in `/src/lib/ai.ts` with `VITE_MOCK_AI=true` returning fixtures that match the schemas, including one grounded and one fallback `company_brief` fixture.
 
