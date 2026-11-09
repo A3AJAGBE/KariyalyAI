@@ -8,8 +8,13 @@
  *  - Strings that are unknown are returned as '' (empty string), never null.
  *  - Arrays that are empty are returned as [], never null.
  *  - Only the fields marked nullable below may be null.
+ *  - Countries always use the canonical names in ./countries.ts. AI output goes through
+ *    AiCountry, which maps any spelling to the canonical name and returns null when the
+ *    value is not a recognised country (the work authorisation check then treats the
+ *    location as unknown).
  */
 import { z } from 'zod';
+import { COUNTRIES, normaliseCountry, type Country } from './countries';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +27,12 @@ export const INPUT_CAPS = {
   about_text: 4_000,
 } as const;
 
-/** Rate limits per user, enforced by the ai function using the ai_usage table. */
+/**
+ * Rate limits per user, enforced by the ai function using the ai_usage table.
+ * Shared daily caps across all users are set by the env vars GLOBAL_DAILY_AI_CAP and
+ * GLOBAL_DAILY_GROUNDED_CAP and read through the global_ai_usage_today() RPC; when one is
+ * reached the function returns the BUSY error code.
+ */
 export const RATE_LIMITS = { perMinute: 6, perDay: 60 } as const;
 
 export const AI_LABEL = 'AI-generated, please verify';
@@ -48,6 +58,21 @@ export type MessageType = z.infer<typeof MessageType>;
 
 export const Confidence = z.enum(['low', 'medium']);
 export type Confidence = z.infer<typeof Confidence>;
+
+/** Why a company brief was generated without search grounding. */
+export const FallbackReason = z.enum(['disabled', 'quota', 'error', 'no_results']);
+export type FallbackReason = z.infer<typeof FallbackReason>;
+
+/** Strict: a canonical name from ./countries.ts. Used by the profile form and the Profile shape. */
+export const CountrySchema = z.enum(COUNTRIES);
+
+/**
+ * Lenient, for AI output: maps any spelling ('UK', 'England') to the canonical name, and
+ * returns null for anything that is not a recognised country ('Remote', 'London, UK').
+ * Note: it uses a transform, so if you ever convert these schemas to JSON Schema for
+ * Gemini's response schema, use the input side (z.toJSONSchema(schema, { io: 'input' })).
+ */
+export const AiCountry = z.string().nullable().transform((v) => normaliseCountry(v));
 
 // ---------------------------------------------------------------------------
 // Profile building blocks
@@ -78,10 +103,31 @@ export const Profile = z.object({
   experience: z.array(ExperienceItem),
   education: z.array(EducationItem),
   target_roles: z.array(z.string()),
-  country_of_residence: z.string().nullable(),
-  right_to_work_countries: z.array(z.string()),
+  country_of_residence: CountrySchema.nullable(),
+  right_to_work_countries: z.array(CountrySchema),
 });
 export type Profile = z.infer<typeof Profile>;
+
+/**
+ * Lenient reader for profiles loaded from the database. Rows saved before the country
+ * dropdowns existed may hold free text such as "UK" or "Lagos, Nigeria". Recognised
+ * values are mapped to canonical names; unrecognised ones become null or are dropped,
+ * so the profile still loads and the UI can ask the user to choose again.
+ * Use this (not Profile) when reading a saved profile.
+ */
+export const ProfileFromDb = Profile.extend({
+  country_of_residence: z
+    .string()
+    .nullable()
+    .transform((value) => normaliseCountry(value)),
+  right_to_work_countries: z
+    .array(z.string())
+    .transform((list) => [
+      ...new Set(
+        list.map((value) => normaliseCountry(value)).filter((c): c is Country => c !== null),
+      ),
+    ]),
+});
 
 /** Subset of the profile sent to the AI. Excludes contact details and work authorisation. */
 export const ProfileForAI = Profile.pick({
@@ -133,8 +179,8 @@ export const MatchJobOutput = z.object({
     title: z.string(),
     company: z.string(),
     location_text: z.string(),
-    /** Country name, or null if not stated. Never a guess. */
-    location_country: z.string().nullable(),
+    /** Canonical country name from ./countries.ts, or null if not stated or not recognised. Never a guess. */
+    location_country: AiCountry,
     /** null if the posting does not say. */
     is_remote: z.boolean().nullable(),
     /** Phrases quoted from the posting that restrict sponsorship or right to work. */
@@ -176,16 +222,41 @@ export const CompanyBriefInput = z.object({
   company: z.string().min(1),
   role: z.string().min(1),
   about_text: z.string().max(INPUT_CAPS.about_text).optional(),
-  /** Stored only. The AI has no web access and the URL is never fetched. */
+  /** Stored only. The URL is never fetched. Grounding searches by company name and role. */
   url: z.string().optional(),
 });
 
-/** A bare company name (no about_text) must return confidence 'low'. */
+/** One recent news item. Must come from grounding sources, with a real URL. */
+export const NewsItem = z.object({
+  headline: z.string(),
+  source: z.string(),
+  url: z.string(),
+  /** null if the source gives no date. */
+  date: z.string().nullable(),
+});
+export type NewsItem = z.infer<typeof NewsItem>;
+
+export const GroundingSource = z.object({ title: z.string(), url: z.string() });
+export type GroundingSource = z.infer<typeof GroundingSource>;
+
+/**
+ * grounded is true when Gemini search grounding produced the brief; otherwise it was
+ * built from about_text only and fallback_reason says why.
+ * confidence is 'low' when there is neither grounding nor about_text, otherwise 'medium'.
+ * recent_news is [] when not grounded and is capped at 5 items (extra items are dropped).
+ * The four new fields have defaults so that older prompts and fixtures, which do not return
+ * them, still validate (treated as not grounded, no news). The ai function sets them from the
+ * grounding result, not from the model.
+ */
 export const CompanyBriefOutput = z.object({
   what_they_do: z.string(),
   values: z.array(z.string()),
   talking_points: z.array(z.string()),
   questions_to_ask: z.array(z.string()),
+  recent_news: z.array(NewsItem).default([]).transform((items) => items.slice(0, 5)),
+  sources: z.array(GroundingSource).default([]),
+  grounded: z.boolean().default(false),
+  fallback_reason: FallbackReason.nullable().default(null),
   confidence: Confidence,
 });
 
@@ -239,6 +310,7 @@ export const AI_ERROR_CODES = [
   'UNAUTHENTICATED',
   'INVALID_INPUT',
   'RATE_LIMITED',
+  'BUSY',
   'MODEL_ERROR',
   'BAD_OUTPUT',
   'TIMEOUT',

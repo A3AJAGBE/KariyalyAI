@@ -5,7 +5,11 @@ import { extractCvText } from '../../lib/extractCvText'
 import { callAI } from '../../lib/ai'
 import { copy } from '../../lib/copy'
 import { supabase } from '../../lib/supabase'
-import type { ParseCvOutput } from '../../../shared/schema'
+import {
+  AI_LABEL,
+  INPUT_CAPS,
+  type ParseCvOutput,
+} from '../../../shared/schema'
 import ProfileReview, {
   type ProfileDraft,
 } from './ProfileReview'
@@ -19,6 +23,7 @@ export default function Onboarding() {
   const [showReview, setShowReview] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [consent, setConsent] = useState(false)
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -58,8 +63,15 @@ export default function Onboarding() {
       return
     }
 
-    if (trimmedText.length > 12000) {
-      setError('Your CV text must not exceed 12,000 characters.')
+    if (trimmedText.length > INPUT_CAPS.cv_text) {
+      setError(
+        `Your CV text must not exceed ${INPUT_CAPS.cv_text.toLocaleString()} characters.`,
+      )
+      return
+    }
+
+    if (!consent) {
+      setError('Please confirm the consent box before analysing your CV.')
       return
     }
 
@@ -166,18 +178,36 @@ export default function Onboarding() {
             }}
             placeholder={copy.onboarding.pastePlaceholder}
             rows={12}
-            maxLength={12000}
+            maxLength={INPUT_CAPS.cv_text}
             className="mt-3 w-full rounded-lg border border-gray-300 p-3 text-sm outline-none focus:border-blue-500"
           />
 
           <p className="mt-1 text-right text-xs text-gray-500">
-            {cvText.length}/12,000 characters
+            {cvText.length}/{INPUT_CAPS.cv_text.toLocaleString()} characters
           </p>
         </div>
 
         <p className="mt-5 text-sm text-gray-500">
           {copy.onboarding.privacyNote}
         </p>
+
+        <label className="mt-4 flex items-start gap-3 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(event) => {
+              setConsent(event.target.checked)
+              setError('')
+            }}
+            className="mt-1 h-4 w-4"
+          />
+          <span>
+            My CV text will be sent to Google's Gemini API to build my profile.
+            On the free tier, Google may use submitted data to improve its
+            products. Deleting my data in KariyalyAI does not delete anything
+            Google may have kept.
+          </span>
+        </label>
 
         {error && (
           <p role="alert" className="mt-4 text-sm text-red-600">
@@ -188,7 +218,7 @@ export default function Onboarding() {
         <button
           type="button"
           onClick={handleParseCv}
-          disabled={loading}
+          disabled={loading || !consent}
           className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 disabled:opacity-60"
         >
           {loading
@@ -199,7 +229,7 @@ export default function Onboarding() {
         {parsedCv && (
           <div className="mt-8 rounded-lg border border-gray-200 p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-              AI-generated, please verify
+              {AI_LABEL}
             </p>
 
             <h2 className="mt-2 text-lg font-semibold">

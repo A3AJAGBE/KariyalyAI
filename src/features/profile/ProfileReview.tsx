@@ -1,6 +1,11 @@
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { ParseCvOutput } from '../../../shared/schema'
+import { AI_LABEL, type ParseCvOutput } from '../../../shared/schema'
+import {
+  COUNTRIES,
+  normaliseCountry,
+  type Country,
+} from '../../../shared/countries'
 import { copy } from '../../lib/copy'
 
 interface ProfileReviewProps {
@@ -21,8 +26,8 @@ export interface ProfileDraft {
   experience: ExperienceItem[]
   education: EducationItem[]
   target_roles: string[]
-  country_of_residence: string
-  right_to_work_countries: string[]
+  country_of_residence: Country
+  right_to_work_countries: Country[]
 }
 
 export default function ProfileReview({
@@ -46,8 +51,10 @@ export default function ProfileReview({
   const [education, setEducation] = useState<EducationItem[]>(
     parsedCv.education ?? [],
   )
-  const [country, setCountry] = useState('')
-  const [rightToWork, setRightToWork] = useState('')
+  const [country, setCountry] = useState<Country | ''>('')
+  const [rightToWork, setRightToWork] = useState<Country[]>([])
+  const [rightToWorkInput, setRightToWorkInput] = useState('')
+  const [rightToWorkError, setRightToWorkError] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -70,6 +77,32 @@ export default function ProfileReview({
     if (event.key === 'Enter' || event.key === ',') {
       event.preventDefault()
       addSkill(skillInput)
+    }
+  }
+
+  // Accepts any spelling the country list knows ("UK", "England") and stores the
+  // canonical name. Anything else is rejected, so only real countries are saved.
+  function addRightToWork(value: string) {
+    if (!value.trim()) return
+
+    const match = normaliseCountry(value)
+
+    if (!match) {
+      setRightToWorkError('Choose a country from the list.')
+      return
+    }
+
+    setRightToWorkError('')
+    setRightToWork((current) =>
+      current.includes(match) ? current : [...current, match],
+    )
+    setRightToWorkInput('')
+  }
+
+  function handleRightToWorkKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault()
+      addRightToWork(rightToWorkInput)
     }
   }
 
@@ -145,7 +178,7 @@ export default function ProfileReview({
     event.preventDefault()
     setError('')
 
-    if (!country.trim() || !rightToWork.trim()) {
+    if (!country || rightToWork.length === 0) {
       setError(
         'Please provide your country of residence and countries where you can work without sponsorship.',
       )
@@ -166,11 +199,8 @@ export default function ProfileReview({
           .split(',')
           .map((item) => item.trim())
           .filter(Boolean),
-        country_of_residence: country.trim(),
-        right_to_work_countries: rightToWork
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
+        country_of_residence: country,
+        right_to_work_countries: rightToWork,
       })
     } catch (err) {
       setError(
@@ -185,7 +215,7 @@ export default function ProfileReview({
     <main className="min-h-screen bg-gray-50 px-4 py-12">
       <section className="mx-auto max-w-2xl rounded-xl bg-white p-8 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-          AI-generated, please verify
+          {AI_LABEL}
         </p>
 
         <h1 className="mt-2 text-2xl font-bold">
@@ -478,32 +508,112 @@ export default function ProfileReview({
             <h2 className="text-lg font-semibold">Work authorisation</h2>
 
             <div>
-              <label className="mb-1 block text-sm font-medium">
+              <label
+                htmlFor="country-of-residence"
+                className="mb-1 block text-sm font-medium"
+              >
                 {copy.onboarding.countryLabel}
               </label>
-              <input
+              <select
+                id="country-of-residence"
                 value={country}
-                onChange={(event) => setCountry(event.target.value)}
-                placeholder="e.g. Nigeria"
+                onChange={(event) =>
+                  setCountry(event.target.value as Country | '')
+                }
                 required
-                className="w-full rounded-lg border border-gray-300 p-3"
-              />
+                className="w-full rounded-lg border border-gray-300 bg-white p-3"
+              >
+                <option value="">Select a country</option>
+                {COUNTRIES.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium">
+              <label
+                htmlFor="right-to-work"
+                className="mb-1 block text-sm font-medium"
+              >
                 {copy.onboarding.rightToWorkLabel}
               </label>
-              <input
-                value={rightToWork}
-                onChange={(event) => setRightToWork(event.target.value)}
-                placeholder="e.g. Nigeria, United Kingdom"
-                required
-                className="w-full rounded-lg border border-gray-300 p-3"
-              />
+
+              {rightToWork.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {rightToWork.map((name) => (
+                    <span
+                      key={name}
+                      className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-sm text-blue-800"
+                    >
+                      {name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRightToWork((current) =>
+                            current.filter((item) => item !== name),
+                          )
+                        }
+                        aria-label={`Remove ${name}`}
+                        className="font-bold text-blue-700"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  id="right-to-work"
+                  list="kariyaly-country-list"
+                  value={rightToWorkInput}
+                  onChange={(event) => {
+                    setRightToWorkInput(event.target.value)
+                    setRightToWorkError('')
+                  }}
+                  onKeyDown={handleRightToWorkKeyDown}
+                  placeholder="Start typing a country"
+                  autoComplete="off"
+                  className="min-w-0 flex-1 rounded-lg border border-gray-300 p-3"
+                />
+                <button
+                  type="button"
+                  onClick={() => addRightToWork(rightToWorkInput)}
+                  className="rounded-lg bg-gray-900 px-4 text-sm font-medium text-white"
+                >
+                  Add
+                </button>
+              </div>
+
+              <datalist id="kariyaly-country-list">
+                {COUNTRIES.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+
+              {country && !rightToWork.includes(country) && (
+                <button
+                  type="button"
+                  onClick={() => addRightToWork(country)}
+                  className="mt-2 text-sm font-medium text-blue-600"
+                >
+                  + Add {country}
+                </button>
+              )}
+
+              {rightToWorkError && (
+                <p role="alert" className="mt-1 text-sm text-red-600">
+                  {rightToWorkError}
+                </p>
+              )}
+
               <p className="mt-1 text-xs text-gray-500">
-                List countries separated by commas. Only include countries
-                where you are legally authorised to work without sponsorship.
+                Add each country where you are legally authorised to work
+                without sponsorship. Living in a country does not always mean
+                you can work there.
               </p>
             </div>
           </section>
