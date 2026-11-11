@@ -1,75 +1,156 @@
-# React + TypeScript + Vite
+# KariyalyAI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+KariyalyAI is an AI-assisted career workspace for analysing jobs, tailoring applications, researching companies, writing outreach, and tracking applications.
 
-Currently, two official plugins are available:
+## Current features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Supabase email authentication and protected routes
+- CV upload/text extraction, AI parsing, profile review and storage
+- Candidate profile dashboard with skills cloud, experience timeline, work-authorisation details and user data deletion
+- Job analysis with:
+  - Visual match score meter, verdict, strengths and gaps
+  - Work-authorisation guidance
+  - UK sponsor-register lookup
+- Tailor workspace:
+  - CV summary and cover letter generation
+  - Editing, copying, autosave and forced regeneration
+- Research workspace:
+  - Gemini search grounding with source links and recent news
+  - Groq fallback when Gemini fails
+  - About-text fallback with confidence and fallback messaging
+- Outreach workspace:
+  - Email and LinkedIn messages
+  - Tone and follow-up controls
+  - Email subject generation and copy action
+- Application tracker:
+  - Kanban board and list views with real-time search
+  - Saved, Applied, Interview, Offer and Rejected columns
+  - Manual applications and notes
+  - Status changes, eight-second undo, history drawer and deletion
+- Responsive application shell with desktop sidebar and mobile navigation
+- Supabase Row Level Security for user-owned data
 
-## React Compiler
+## UI and accessibility
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Accessible, executive design system with high-contrast typography, focus states and responsive layouts
+- Standardised `AI-generated, please verify` label across all AI outputs
 
-## Expanding the ESLint configuration
+## Routes
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+| Route | Purpose |
+|---|---|
+| `/login` | Sign in |
+| `/signup` | Create an account |
+| `/onboarding` | Create a professional profile |
+| `/app/profile` | Career workspace overview and profile dashboard |
+| `/app/jobs/new` | Analyse a job |
+| `/app/jobs/:id` | Match, Tailor, Research and Outreach tabs |
+| `/app/tracker` | Application tracker |
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Tech stack
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- React, TypeScript, Vite and React Router
+- Netlify Functions
+- Supabase Auth and PostgreSQL
+- Zod schemas shared between frontend and functions
+- Google Gemini as the primary AI provider
+- Groq as the general AI fallback provider
+- Tailwind CSS and Lucide React
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Setup
 
+### Prerequisites
+
+- Node.js and npm
+- Supabase project with migrations applied
+- Netlify CLI
+- Gemini API access
+- Groq API access for AI fallback requests
+
+Install dependencies:
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+### Environment variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Keep server-only credentials out of `VITE_` variables and do not commit local environment files.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Browser/local variables:
 
+```env
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+VITE_MOCK_AI=false
 ```
+
+Netlify function variables:
+
+```env
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=...
+GROQ_API_KEY=...
+GROQ_MODEL=llama-3.3-70b-versatile
+GROUNDING_ENABLED=true
+GLOBAL_DAILY_AI_CAP=150
+GLOBAL_DAILY_GROUNDED_CAP=50
+```
+
+Optional tuning variables:
+
+```env
+GROUNDING_TIMEOUT_MS=6000
+STRUCTURE_TIMEOUT_MS=3500
+GROQ_TIMEOUT_MS=20000
+```
+
+`GROQ_API_KEY` is used only on the server when Gemini fails for a standard AI task. For `company_brief`, Gemini still handles search grounding first; Groq can generate the non-grounded fallback, but cannot provide grounded news or source links.
+
+### Run locally
+
+For frontend-only work:
+
+```bash
+npm run dev
+```
+
+For the frontend and Netlify Functions together:
+
+```bash
+npx netlify dev
+```
+
+The local app is normally available at `http://localhost:8888` through Netlify Dev, or `http://localhost:5173` through Vite.
+
+## Validation
+
+```bash
+npm run build
+npm run lint
+```
+
+The build may report a bundle-size warning; it currently completes successfully.
+
+## Database
+
+Apply migrations in order:
+
+1. `supabase/migrations/001_init.sql`
+2. `supabase/migrations/002_ai_cache.sql`
+3. `supabase/migrations/003_grounding_and_global_cap.sql`
+
+The migrations define profiles, jobs, matches, generated outputs, applications, application history, AI usage, cache, sponsor data, RLS policies and supporting RPCs/triggers.
+
+## Remaining verification
+
+The main functionality is implemented. Remaining work is verification and polish:
+
+
+- Test Gemini failure, grounding disabled, Groq fallback and shared-cap responses.
+- Add automated unit/component tests where needed.
+- Run the representative CV and job-description test set before release.
+
+AI-generated content is advisory. Users should verify application content, company research and immigration information independently.

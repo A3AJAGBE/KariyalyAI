@@ -66,6 +66,7 @@ const groundingEnabled = () => process.env.GROUNDING_ENABLED !== 'false'
  */
 const GROUNDING_TIMEOUT_MS = () => envInt('GROUNDING_TIMEOUT_MS', 6000)
 const STRUCTURE_TIMEOUT_MS = () => envInt('STRUCTURE_TIMEOUT_MS', 3500)
+const GROQ_TIMEOUT_MS = () => envInt('GROQ_TIMEOUT_MS', 20000)
 
 /** Grounded briefs contain news, so a cached one is only reused for this long. */
 const COMPANY_BRIEF_CACHE_HOURS = 24
@@ -148,6 +149,12 @@ interface GeminiCall {
   timeoutMs?: number
 }
 
+interface GroqCall {
+  system: string
+  user: string
+  timeoutMs?: number
+}
+
 async function callGemini(call: GeminiCall): Promise<GeminiBody> {
   const apiKey = process.env.GEMINI_API_KEY
   const model = process.env.GEMINI_MODEL
@@ -191,6 +198,46 @@ async function callGemini(call: GeminiCall): Promise<GeminiBody> {
   }
 
   return (await result.json()) as GeminiBody
+}
+
+async function callGroq(call: GroqCall): Promise<unknown> {
+  const apiKey = process.env.GROQ_API_KEY
+  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
+
+  if (!apiKey) throw new Error('GROQ_API_KEY is missing.')
+
+  const result = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: call.system },
+        { role: 'user', content: call.user },
+      ],
+    }),
+    signal: AbortSignal.timeout(call.timeoutMs ?? GROQ_TIMEOUT_MS()),
+  })
+
+  if (!result.ok) throw new Error(`Groq returned HTTP ${result.status}.`)
+  return result.json()
+}
+
+function getGroqText(body: unknown): string {
+  if (!body || typeof body !== 'object') return ''
+  const choices = (body as { choices?: unknown }).choices
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== 'object') {
+    return ''
+  }
+  const message = (choices[0] as { message?: unknown }).message
+  if (!message || typeof message !== 'object') return ''
+  const content = (message as { content?: unknown }).content
+  return typeof content === 'string' ? content : ''
 }
 
 function withBase(prompt: string, retryFeedback?: string): string {
@@ -240,6 +287,7 @@ async function generateValidated<T>(
       } catch {
         throw new Error('Gemini returned invalid JSON.')
       }
+
     } catch (error) {
       if (error instanceof GeminiProviderError) throw error
 
@@ -283,6 +331,72 @@ async function generateValidated<T>(
     502,
     'The AI could not produce a valid response. Please try again.',
   )
+}
+
+async function generateValidatedWithGroq<T>(
+  systemPrompt: string,
+  input: unknown,
+  schema: z.ZodType<T>,
+): Promise<T> {
+  let feedback = ''
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const body = await callGroq({
+        system: withBase(systemPrompt, feedback || undefined),
+        user: JSON.stringify(input),
+      })
+      const text = getGroqText(body)
+      if (!text) throw new Error('Groq returned an empty response.')
+
+      let generated: unknown
+      try {
+        generated = JSON.parse(text)
+      } catch {
+        throw new Error('Groq returned invalid JSON.')
+      }
+
+      const outputResult = schema.safeParse(generated)
+      if (outputResult.success) return outputResult.data
+
+      feedback = outputResult.error.issues
+        .map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`)
+        .join('\n')
+    } catch (error) {
+      console.error(
+        '[AI] Groq fallback generation error:',
+        error instanceof Error ? error.message : 'Unknown error',
+      )
+      feedback =
+        error instanceof Error ? error.message : 'Groq returned an invalid response.'
+    }
+  }
+
+  throw new AiFailure(
+    'BAD_OUTPUT',
+    502,
+    'The fallback AI could not produce a valid response. Please try again.',
+  )
+}
+
+async function generateValidatedWithProviderFallback<T>(
+  systemPrompt: string,
+  input: unknown,
+  schema: z.ZodType<T>,
+): Promise<T> {
+  try {
+    return await generateValidated(systemPrompt, input, schema)
+  } catch (error) {
+    if (!(error instanceof GeminiProviderError) || !process.env.GROQ_API_KEY) {
+      throw error
+    }
+
+    console.error(
+      '[AI] Gemini failed; using Groq fallback. HTTP status:',
+      error.status,
+    )
+    return generateValidatedWithGroq(systemPrompt, input, schema)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,16 +494,21 @@ async function tryGroundedBrief(
 async function fallbackBrief(
   input: CompanyBriefInputData,
   reason: FallbackReason,
+  provider: 'gemini' | 'groq' = 'gemini',
 ): Promise<CompanyBriefResult> {
-  const core = await generateValidated(
-    companyBriefPrompt,
-    {
-      company: input.company,
-      role: input.role,
-      about_text: input.about_text ?? '',
-    },
-    CompanyBriefCore,
-  )
+  const fallbackInput = {
+    company: input.company,
+    role: input.role,
+    about_text: input.about_text ?? '',
+  }
+  const core =
+    provider === 'groq'
+      ? await generateValidatedWithGroq(
+          companyBriefPrompt,
+          fallbackInput,
+          CompanyBriefCore,
+        )
+      : await generateValidated(companyBriefPrompt, fallbackInput, CompanyBriefCore)
 
   const hasAboutText = Boolean(input.about_text?.trim())
 
@@ -414,6 +533,17 @@ async function runCompanyBrief(
     const attempt = await tryGroundedBrief(input)
     if (attempt.ok) return attempt.data
     reason = attempt.reason
+  }
+
+  if (process.env.GROQ_API_KEY) {
+    try {
+      return await fallbackBrief(input, reason, 'groq')
+    } catch (error) {
+      console.error(
+        '[AI] Groq company brief fallback failed:',
+        error instanceof Error ? error.message : 'Unknown error',
+      )
+    }
   }
 
   return fallbackBrief(input, reason)
@@ -614,12 +744,16 @@ export const handler: Handler = async (event) => {
       }
     }
 
-    // 5. Record usage, including whether this request used grounding.
-    const { error: usageError } = await supabase
+    // 5. Record the request immediately so failed generations still count
+    // against the per-user and shared AI limits. Grounding is updated only
+    // after the final output confirms that search grounding succeeded.
+    const { data: usageRow, error: usageError } = await supabase
       .from('ai_usage')
-      .insert({ task: taskName, grounded: grounding.attempt })
+      .insert({ task: taskName, grounded: false })
+      .select('id')
+      .single()
 
-    if (usageError) {
+    if (usageError || !usageRow) {
       throw new Error('Unable to record AI usage.')
     }
 
@@ -632,7 +766,7 @@ export const handler: Handler = async (event) => {
         grounding,
       )
     } else {
-      validatedOutput = await generateValidated(
+      validatedOutput = await generateValidatedWithProviderFallback(
         TASK_PROMPTS[taskName],
         input,
         config.output as z.ZodType<unknown>,
@@ -648,6 +782,19 @@ export const handler: Handler = async (event) => {
           subject: null,
         }
       }
+    }
+
+    const grounded =
+      taskName === 'company_brief' &&
+      (validatedOutput as CompanyBriefResult).grounded === true
+
+    const { error: groundingUpdateError } = await supabase
+      .from('ai_usage')
+      .update({ grounded })
+      .eq('id', usageRow.id)
+
+    if (groundingUpdateError) {
+      throw new Error('Unable to record AI grounding usage.')
     }
 
     // 7. Cache. Briefs that fell back are not cached, so the next request tries grounding

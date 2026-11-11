@@ -92,4 +92,22 @@ export const copy = {
       'Your content was generated, but the saved outputs could not be found.',
     keyChangesTitle: 'What was tailored',
   },
+
+  workAuth: {
+    title: 'Work authorisation',
+    noVisaNeeded: 'No visa sponsorship indicated',
+    noSponsorship: 'Sponsorship restriction found',
+    likelyLicensed: 'Likely licensed to sponsor',
+    notFound: 'Sponsor not found',
+    notChecked: 'Not checked',
+    unknownLocation: 'Location unknown',
+    disclaimer:
+      'General information, not immigration advice. Verify on GOV.UK.',
+    saveTracker: 'Save to tracker',
+    savedTracker: 'Saved to tracker.',
+    alreadyTracked: 'This job is already in your tracker.',
+    savingTracker: 'Saving...',
+    trackerError: 'Unable to save this job to your tracker.',
+    sponsorError: 'Unable to check the UK sponsor register.',
+  },
 }
