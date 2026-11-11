@@ -102,10 +102,14 @@ GLOBAL_DAILY_GROUNDED_CAP=50
 Optional tuning variables:
 
 ```env
+REQUEST_BUDGET_MS=9000
+GEMINI_TIMEOUT_MS=5000
+GROQ_TIMEOUT_MS=4000
 GROUNDING_TIMEOUT_MS=6000
 STRUCTURE_TIMEOUT_MS=3500
-GROQ_TIMEOUT_MS=20000
 ```
+
+Netlify synchronous functions stop after about 10 seconds on the default plan. `REQUEST_BUDGET_MS` is the total time one request may spend calling AI providers, and every provider call is cut short to fit inside it. When Gemini times out, cannot be reached or returns an HTTP error, standard tasks fall back to Groq. `GEMINI_TIMEOUT_MS` applies only when `GROQ_API_KEY` is set; without a fallback provider, Gemini may use the whole request budget. Raise these values only if the site's function time limit is higher.
 
 `GROQ_API_KEY` is used only on the server when Gemini fails for a standard AI task. For `company_brief`, Gemini still handles search grounding first; Groq can generate the non-grounded fallback, but cannot provide grounded news or source links.
 
