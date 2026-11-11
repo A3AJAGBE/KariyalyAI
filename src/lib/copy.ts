@@ -1,4 +1,3 @@
-
 export const copy = {
   onboarding: {
     title: 'Build your professional profile',
@@ -21,5 +20,76 @@ export const copy = {
     rightToWorkLabel: 'Countries where you can work without sponsorship',
     saveButton: 'Save profile',
     saving: 'Saving profile...',
+  },
+
+  jobs: {
+    title: 'Analyse a job opportunity',
+    description:
+      'Paste a job description to see how well your profile matches the role.',
+    jobTitleLabel: 'Job title',
+    jobTitlePlaceholder: 'e.g. Data Analyst',
+    companyLabel: 'Company',
+    companyPlaceholder: 'e.g. Google',
+    locationLabel: 'Job location',
+    locationPlaceholder: 'e.g. Lagos, Nigeria or Remote',
+    urlLabel: 'Job posting URL',
+    urlPlaceholder: 'https://example.com/job-posting',
+    descriptionLabel: 'Job description',
+    descriptionPlaceholder: 'Paste the full job description here...',
+    descriptionHint: 'Maximum 8,000 characters.',
+    submitButton: 'Analyse job match',
+    submitting: 'Analysing job...',
+    loadingProfile: 'Loading your professional profile...',
+    missingProfile:
+      'You need to create your professional profile before analysing a job.',
+    missingDescription: 'Please enter the job description.',
+    descriptionTooLong:
+      'The job description must not exceed 8,000 characters.',
+    profileError: 'Unable to load your profile. Please try again.',
+    analysisError: 'Unable to analyse this job. Please try again.',
+    saveError:
+      'Your job analysis was completed, but we could not save the results. Please try again.',
+    aiLabel: 'AI-generated, please verify',
+    resultsTitle: 'Your job match results',
+    scoreLabel: 'Match score',
+    verdictLabel: 'Match assessment',
+    summaryLabel: 'Overall assessment',
+    strengthsLabel: 'Your strengths',
+    gapsLabel: 'Areas to improve',
+    suggestionLabel: 'Suggested improvement',
+    backButton: 'Analyse another job',
+    loadingResults: 'Loading your match results...',
+    resultsError: 'Unable to load these results. Please try again.',
+    notFound: 'We could not find this job or its matching results.',
+  },
+
+  tailor: {
+    title: 'Tailor your application',
+    loading: 'Loading your tailoring workspace...',
+    description: 'Create a CV summary and cover letter tailored to this role.',
+    toneLabel: 'Writing tone',
+    generatePrompt:
+      'Generate tailored application content using your professional profile and this job description.',
+    generate: 'Generate application content',
+    generating: 'Generating...',
+    regenerating: 'Regenerating...',
+    regenerate: 'Regenerate content',
+    summaryTitle: 'Tailored CV summary',
+    coverLetterTitle: 'Cover letter',
+    copySummary: 'Copy CV summary',
+    copyCoverLetter: 'Copy cover letter',
+    copiedSummary: 'CV summary copied to clipboard.',
+    copiedCoverLetter: 'Cover letter copied to clipboard.',
+    copyError:
+      'Unable to copy this content. Please select and copy it manually.',
+    aiLabel: 'AI-generated, please verify',
+    saved: 'Changes saved.',
+    saving: 'Saving changes...',
+    saveError: 'Unable to save your changes. Please try again.',
+    ready: 'Your application content is ready.',
+    generationError: 'Unable to generate your application content.',
+    missingOutputs:
+      'Your content was generated, but the saved outputs could not be found.',
+    keyChangesTitle: 'What was tailored',
   },
 }

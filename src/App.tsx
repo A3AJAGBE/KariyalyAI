@@ -1,10 +1,14 @@
 
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+
 import { useAuth } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
+
 import Login from './features/auth/Login'
 import Signup from './features/auth/Signup'
 import Onboarding from './features/profile/Onboarding'
+import JobSubmission from './features/jobs/JobSubmission'
+import JobResults from './features/jobs/JobResults'
 
 function ProfilePage() {
   const { user, signOut } = useAuth()
@@ -37,13 +41,15 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
-
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
         <Route element={<ProtectedRoute />}>
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/app/profile" element={<ProfilePage />} />
+
+          <Route path="/app/jobs/new" element={<JobSubmission />} />
+          <Route path="/app/jobs/:id" element={<JobResults />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />
