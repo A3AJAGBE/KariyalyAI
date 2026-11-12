@@ -42,7 +42,7 @@ Constraints: free tiers only (Supabase, Netlify, Gemini). No auto-apply, no scra
 | Fuzzy matching | Postgres `pg_trgm` (UK sponsor register) |
 
 Environment variables
-- Netlify (server): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GROQ_API_KEY`, `GROQ_MODEL` (optional fallback provider; defaults to `llama-3.3-70b-versatile`), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GROUNDING_ENABLED` (`true` or `false`, kill switch for search grounding), `GLOBAL_DAILY_AI_CAP`, `GLOBAL_DAILY_GROUNDED_CAP` (set both from the limits shown in Google AI Studio for the chosen model, with a safety margin) Optional tuning: `GROUNDING_TIMEOUT_MS` (default 6000), `STRUCTURE_TIMEOUT_MS` (default 3500), and `GROQ_TIMEOUT_MS` (default 20000). When Gemini grounding fails, `company_brief` uses Groq for the non-grounded fallback when `GROQ_API_KEY` is configured; it does not fabricate news or sources. If the caps are unset, the function uses placeholder defaults of 250 requests and 100 grounded requests per day, so set both.
+- Netlify (server): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GROQ_API_KEY`, `GROQ_MODEL` (optional fallback provider; defaults to `llama-3.3-70b-versatile`), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GROUNDING_ENABLED` (`true` or `false`, kill switch for search grounding), `GLOBAL_DAILY_AI_CAP`, `GLOBAL_DAILY_GROUNDED_CAP` (set both from the limits shown in Google AI Studio for the chosen model, with a safety margin) Optional tuning: `GROUNDING_TIMEOUT_MS` (default 6000), `STRUCTURE_TIMEOUT_MS` (default 3500), and `GROQ_TIMEOUT_MS` (default 20000). When Gemini grounding fails, `company_brief` uses Groq for the non-grounded fallback when `GROQ_API_KEY` is configured; it does not fabricate news or sources. If the caps are unset, the function uses placeholder defaults of 250 requests and 100 grounded requests per day, so set both. Time limits: `REQUEST_BUDGET_MS` (default 9000) caps the total time a request spends calling AI providers, below Netlify's roughly 10-second limit; `GEMINI_TIMEOUT_MS` (default 5000) and `GROQ_TIMEOUT_MS` (default 4000) cap single calls. The Gemini cap applies only when a Groq key is set; without one, Gemini may use the whole budget. A Gemini timeout, network failure or HTTP error on a standard task falls back to Groq; Groq outages are not retried. The consent text names both Google and Groq, because CV text can reach either.
 - Browser: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_AI_ENDPOINT` (default `/api/ai`), `VITE_MOCK_AI` (`true` returns fixtures; development only, and must be false or unset in the Netlify production environment)
 - The Supabase service role key is used only by the local sponsor loader script. Never deploy it.
 
@@ -151,14 +151,14 @@ RPCs (callable by signed-in users only):
 
 Inputs: `country_of_residence`, `right_to_work_countries` (profile, explicit), `location_country`, `is_remote`, job description text, and optionally the sponsor match.
 
-Phrase scan (case-insensitive, in code): right to work, no sponsorship, unable to sponsor, not able to offer visa sponsorship, must be eligible to work, and similar. The AI field `no_sponsorship_phrases` is only a backup.
+Phrase scan (case-insensitive, in code): regular expressions in `NO_SPONSORSHIP_PATTERNS` in `shared/workAuth.ts`, covering wording such as "unable to offer visa sponsorship", "cannot sponsor", "sponsorship is not available", "no sponsorship", "without sponsorship", "must have the right to work" and "must be eligible to work". Positive wording ("we offer visa sponsorship") must not match. Add a pattern when a real posting slips through. AI-quoted `no_sponsorship_phrases` count only if they appear in the posting text; they are a backup, and are not currently stored with the job.
 
 Decision order, first match wins:
 1. `location_country` is in the user's right-to-work list: `no_visa_needed`
 2. Job is remote and no restriction phrase found: `no_visa_needed` (note: check the posting for country restrictions)
 3. `location_country` is null: `unknown_location`
 4. A no-sponsorship phrase found (the country is known and outside the list): `no_sponsorship`
-5. Country is the UK and Tier 2 is built: `likely_licensed` (similarity 0.6 or higher) or `not_found`
+5. Country is the UK and Tier 2 is built: `likely_licensed` (similarity 0.6 or higher) or `not_found`. If `sponsor_register_meta` has no row (the register has not been loaded), the state stays `not_checked` with a note, so an empty register never reports every company as `not_found`.
 6. Anything else (outside the list, not the UK or Tier 2 not built): `not_checked`
 
 Wording rules: say "licensed to sponsor", never "will sponsor you for this role". Show the matched name, town and register date. If not confirmed, show general tips and link to official GOV.UK pages without hardcoding rules or salary thresholds. Always show: `General information, not immigration advice. Verify on GOV.UK.` The register shows who may sponsor, not who is actively recruiting overseas, and it has no job codes or salaries.

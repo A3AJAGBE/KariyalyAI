@@ -62,20 +62,16 @@ export default function Research({
   useEffect(() => {
     let active = true
 
+    // Load the most recent brief for this job. The pasted About text is not kept
+    // between visits, so looking the brief up by its input hash would never match.
     async function loadSaved() {
-      const input = {
-        company,
-        role,
-        about_text: aboutText,
-        ...(sourceUrl ? { url: sourceUrl } : {}),
-      }
-      const hash = await inputHash(input)
       const { data, error: loadError } = await supabase
         .from('generated_outputs')
         .select('content')
         .eq('job_id', jobId)
         .eq('kind', 'company_brief')
-        .eq('input_hash', hash)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
 
       if (active && !loadError && data?.content) {
@@ -88,7 +84,7 @@ export default function Research({
     return () => {
       active = false
     }
-  }, [aboutText, company, jobId, role, sourceUrl])
+  }, [jobId])
 
   async function generate() {
     const input = {

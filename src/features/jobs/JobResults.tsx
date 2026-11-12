@@ -154,6 +154,24 @@ export default function JobResults() {
             jobData.location_country === 'United Kingdom'
           ) {
             try {
+              // An empty register would make every UK company look "not found".
+              const { data: registerMeta, error: metaError } = await supabase
+                .from('sponsor_register_meta')
+                .select('register_date')
+                .maybeSingle()
+
+              if (metaError) throw metaError
+
+              if (!registerMeta) {
+                if (isMounted) {
+                  setWorkAuth({
+                    ...baseResult,
+                    note: copy.workAuth.registerNotLoaded,
+                  })
+                }
+                return
+              }
+
               const sponsorResult = await lookupUkSponsor(
                 jobData.company,
                 async (company) =>

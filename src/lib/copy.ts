@@ -109,5 +109,7 @@ export const copy = {
     savingTracker: 'Saving...',
     trackerError: 'Unable to save this job to your tracker.',
     sponsorError: 'Unable to check the UK sponsor register.',
+    registerNotLoaded:
+      'The UK sponsor register has not been loaded yet, so this company was not checked.',
   },
 }

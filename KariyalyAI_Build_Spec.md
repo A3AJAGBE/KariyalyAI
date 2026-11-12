@@ -129,7 +129,7 @@ Done when: a company name returns a grounded brief with sources, and switching `
 
 Start once step 4 is done and the team has an owner for it.
 
-1. `scripts/load_sponsors.ts`: read the GOV.UK register CSV, de-duplicate by organisation name and town, insert in batches (the database normalises names itself, so don't normalise in the script), upsert the register date into `sponsor_register_meta`.
+1. `scripts/load_sponsors.ts` (written; run it with `npx tsx scripts/load_sponsors.ts <csv> --dry-run` first, then with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set in the shell): read the GOV.UK register CSV, de-duplicate by organisation name and town, insert in batches (the database normalises names itself, so don't normalise in the script), upsert the register date into `sponsor_register_meta`.
 2. `match_sponsor(q)` using `pg_trgm`. Similarity 0.6 or higher means `likely_licensed`. Tune on 10 to 15 known companies.
 3. Show matched name, town and register date.
 

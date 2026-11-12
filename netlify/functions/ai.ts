@@ -66,7 +66,31 @@ const groundingEnabled = () => process.env.GROUNDING_ENABLED !== 'false'
  */
 const GROUNDING_TIMEOUT_MS = () => envInt('GROUNDING_TIMEOUT_MS', 6000)
 const STRUCTURE_TIMEOUT_MS = () => envInt('STRUCTURE_TIMEOUT_MS', 3500)
-const GROQ_TIMEOUT_MS = () => envInt('GROQ_TIMEOUT_MS', 20000)
+const GROQ_TIMEOUT_MS = () => envInt('GROQ_TIMEOUT_MS', 4000)
+
+/**
+ * Time limit for one Gemini call on standard tasks. Kept short so that, when Gemini is
+ * slow or unresponsive, Groq still has time to answer within the request budget.
+ */
+const GEMINI_TIMEOUT_MS = () => envInt('GEMINI_TIMEOUT_MS', 5000)
+
+/**
+ * Total time one request may spend calling AI providers. Netlify synchronous functions
+ * stop after about 10 seconds on the default plan, so the default leaves headroom.
+ * Raise it (and the provider timeouts) only if the site's function limit is higher.
+ */
+const REQUEST_BUDGET_MS = () => envInt('REQUEST_BUDGET_MS', 9000)
+
+/**
+ * Time limit for a standard Gemini call. With a Groq key the limit is short, to leave
+ * Groq time to answer. With no fallback provider there is nothing to save time for, so
+ * Gemini may use the whole remaining budget and a slow but valid answer still succeeds.
+ */
+const standardGeminiTimeoutMs = () =>
+  process.env.GROQ_API_KEY ? GEMINI_TIMEOUT_MS() : REQUEST_BUDGET_MS()
+
+/** Set at the start of each request. Netlify runs one request per instance at a time. */
+let requestDeadline = Number.POSITIVE_INFINITY
 
 /** Grounded briefs contain news, so a cached one is only reused for this long. */
 const COMPANY_BRIEF_CACHE_HOURS = 24
@@ -95,6 +119,52 @@ class AiFailure extends Error {
     this.name = 'AiFailure'
     this.code = code
     this.status = status
+  }
+}
+
+class GroqProviderError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'GroqProviderError'
+    this.status = status
+  }
+}
+
+/**
+ * Caps a provider call so it ends before the request budget runs out. Throws TIMEOUT
+ * when too little time is left to make a call worth starting.
+ */
+function budget(preferredMs: number): number {
+  const remaining = requestDeadline - Date.now() - 250
+  if (remaining < 800) {
+    throw new AiFailure(
+      'TIMEOUT',
+      504,
+      'The AI took too long to respond. Please try again.',
+    )
+  }
+  return Math.min(preferredMs, remaining)
+}
+
+/**
+ * fetch that turns a timeout or network failure into the provider's error class, so
+ * "slow or unreachable" is handled the same way as an HTTP error (504 or 503).
+ */
+async function fetchOrThrow(
+  url: string,
+  init: RequestInit,
+  toError: (status: number, message: string) => Error,
+): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    if (error instanceof AiFailure) throw error
+    const timedOut =
+      error instanceof Error &&
+      (error.name === 'TimeoutError' || error.name === 'AbortError')
+    throw toError(timedOut ? 504 : 503, timedOut ? 'timed out' : 'could not be reached')
   }
 }
 
@@ -167,7 +237,7 @@ async function callGemini(call: GeminiCall): Promise<GeminiBody> {
     `https://generativelanguage.googleapis.com/v1beta/models/` +
     `${model}:generateContent?key=${apiKey}`
 
-  const result = await fetch(endpoint, {
+  const result = await fetchOrThrow(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -187,8 +257,8 @@ async function callGemini(call: GeminiCall): Promise<GeminiBody> {
         ? { generationConfig: { responseMimeType: 'application/json' } }
         : {}),
     }),
-    signal: AbortSignal.timeout(call.timeoutMs ?? 60000),
-  })
+    signal: AbortSignal.timeout(budget(call.timeoutMs ?? GEMINI_TIMEOUT_MS())),
+  }, (status, message) => new GeminiProviderError(status, `Gemini ${message}.`))
 
   if (!result.ok) {
     throw new GeminiProviderError(
@@ -206,7 +276,7 @@ async function callGroq(call: GroqCall): Promise<unknown> {
 
   if (!apiKey) throw new Error('GROQ_API_KEY is missing.')
 
-  const result = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const result = await fetchOrThrow('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -221,10 +291,12 @@ async function callGroq(call: GroqCall): Promise<unknown> {
         { role: 'user', content: call.user },
       ],
     }),
-    signal: AbortSignal.timeout(call.timeoutMs ?? GROQ_TIMEOUT_MS()),
-  })
+    signal: AbortSignal.timeout(budget(call.timeoutMs ?? GROQ_TIMEOUT_MS())),
+  }, (status, message) => new GroqProviderError(status, `Groq ${message}.`))
 
-  if (!result.ok) throw new Error(`Groq returned HTTP ${result.status}.`)
+  if (!result.ok) {
+    throw new GroqProviderError(result.status, `Groq returned HTTP ${result.status}.`)
+  }
   return result.json()
 }
 
@@ -264,7 +336,7 @@ async function generateValidated<T>(
   systemPrompt: string,
   input: unknown,
   schema: z.ZodType<T>,
-  timeoutMs = 60000,
+  timeoutMs = standardGeminiTimeoutMs(),
 ): Promise<T> {
   let feedback = ''
 
@@ -289,7 +361,9 @@ async function generateValidated<T>(
       }
 
     } catch (error) {
-      if (error instanceof GeminiProviderError) throw error
+      if (error instanceof GeminiProviderError || error instanceof AiFailure) {
+        throw error
+      }
 
       console.error(
         '[AI] Gemini generation error:',
@@ -363,6 +437,20 @@ async function generateValidatedWithGroq<T>(
         .map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`)
         .join('\n')
     } catch (error) {
+      if (error instanceof AiFailure) throw error
+
+      // An outage or timeout will not fix itself on an immediate retry.
+      if (error instanceof GroqProviderError) {
+        console.error('[AI] Groq fallback failed. HTTP status:', error.status)
+        throw new AiFailure(
+          error.status === 504 ? 'TIMEOUT' : 'MODEL_ERROR',
+          error.status === 504 ? 504 : 502,
+          error.status === 504
+            ? 'The AI took too long to respond. Please try again.'
+            : 'The AI service is unavailable right now. Please try again shortly.',
+        )
+      }
+
       console.error(
         '[AI] Groq fallback generation error:',
         error instanceof Error ? error.message : 'Unknown error',
@@ -573,6 +661,7 @@ async function globalUsageToday(
 // ---------------------------------------------------------------------------
 
 export const handler: Handler = async (event) => {
+  requestDeadline = Date.now() + REQUEST_BUDGET_MS()
   if (event.httpMethod !== 'POST') {
     return failure('INVALID_INPUT', 405, 'Only POST requests are supported.')
   }
@@ -794,7 +883,8 @@ export const handler: Handler = async (event) => {
       .eq('id', usageRow.id)
 
     if (groundingUpdateError) {
-      throw new Error('Unable to record AI grounding usage.')
+      // The user already has a good result. Do not fail the request over bookkeeping.
+      console.error('[AI] Unable to record AI grounding usage.')
     }
 
     // 7. Cache. Briefs that fell back are not cached, so the next request tries grounding
@@ -834,6 +924,14 @@ export const handler: Handler = async (event) => {
         '[AI] Gemini API request failed. HTTP status:',
         error.status,
       )
+
+      if (error.status === 504) {
+        return failure(
+          'TIMEOUT',
+          504,
+          'The AI took too long to respond. Please try again.',
+        )
+      }
 
       const message =
         error.status === 429

@@ -25,25 +25,41 @@ export interface WorkAuthInput {
   noSponsorshipPhrases?: string[]
 }
 
+/**
+ * Wording that restricts sponsorship or requires existing work rights. Patterns, not
+ * fixed strings, because postings phrase this many ways ("unable to offer visa
+ * sponsorship", "cannot sponsor", "sponsorship is not available", ...).
+ * Positive wording ("we offer visa sponsorship") deliberately does not match.
+ */
+const NO_SPONSORSHIP_PATTERNS: RegExp[] = [
+  // unable to offer visa sponsorship / cannot sponsor / do not provide sponsorship
+  /\b(?:unable|not able|cannot|can ?not|can't|won't|will not|do not|does not|don't|doesn't|are not|is not|aren't|isn't)\s+(?:to\s+)?(?:currently\s+)?(?:offer|provide|support|consider|sponsor|be\s+(?:able\s+to\s+)?(?:offer|provide)?)?\s*(?:any\s+)?(?:visa\s+|work\s+permit\s+)?sponsor/,
+  // no sponsorship / no visa sponsorship
+  /\bno\s+(?:visa\s+)?sponsorship\b/,
+  // sponsorship is not available / sponsorship unavailable
+  /\bsponsorship\s+(?:is\s+)?(?:not\s+|un)available\b/,
+  // without sponsorship / without the need for visa sponsorship
+  /\bwithout\s+(?:the\s+need\s+for\s+|requiring\s+)?(?:visa\s+)?sponsorship\b/,
+  // must (already) have / hold the (full) right to work
+  /\bmust\s+(?:already\s+)?(?:have|hold|possess)\s+(?:the\s+|a\s+|full\s+|existing\s+|valid\s+|current\s+)*right\s+to\s+work\b/,
+  // must be eligible / authorised / entitled to work
+  /\bmust\s+(?:already\s+)?be\s+(?:legally\s+)?(?:eligible|authori[sz]ed|entitled|permitted)\s+to\s+work\b/,
+  // right to work in the UK is required / essential
+  /\bright\s+to\s+work\b[^.]{0,40}\b(?:required|essential|mandatory|necessary)\b/,
+]
+
 export function hasNoSponsorshipPhrase(
   description: string,
   phrases: string[] = [],
 ): boolean {
-  const text = description.toLowerCase()
-  const configuredPhrases = [
-    'no sponsorship',
-    'does not sponsor',
-    'do not sponsor',
-    'will not sponsor',
-    'unable to sponsor',
-    'must have the right to work',
-    'must be authorised to work',
-    'without sponsorship',
-  ]
+  const text = description.toLowerCase().replace(/\s+/g, ' ')
 
-  return [...phrases, ...configuredPhrases].some((phrase) =>
-    text.includes(phrase.toLowerCase()),
-  )
+  // AI-quoted phrases count only if they really appear in the posting.
+  if (phrases.some((phrase) => phrase.trim() && text.includes(phrase.toLowerCase().trim()))) {
+    return true
+  }
+
+  return NO_SPONSORSHIP_PATTERNS.some((pattern) => pattern.test(text))
 }
 
 export function evaluateWorkAuth(input: WorkAuthInput): WorkAuthResult {

@@ -323,10 +323,11 @@ export default function Onboarding() {
                 className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
               />
               <span className="leading-relaxed">
-                My CV text will be sent to Google's Gemini API to build my profile.
+                My CV text will be sent to Google's Gemini API, or to Groq if
+                Gemini is unavailable, to build my profile.
                 On the free tier, Google may use submitted data to improve its
                 products. Deleting my data in KariyalyAI does not delete anything
-                Google may have kept.
+                Google or Groq may have kept.
               </span>
             </label>
           </div>
